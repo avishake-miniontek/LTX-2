@@ -42,9 +42,6 @@ async def lifespan(app: FastAPI):  # noqa: ANN201, ARG001
         # Run startup cleanup
         await cleanup_service.cleanup_on_startup()
 
-        # Initialize pipeline
-        pipeline_manager.initialize()
-
         # Start queue processor
         queue_manager.start()
 

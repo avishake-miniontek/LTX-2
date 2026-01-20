@@ -8,7 +8,7 @@ from app.logger import log
 from ltx_core.loader import LTXV_LORA_COMFY_RENAMING_MAP, LoraPathStrengthAndSDOps
 from ltx_core.model.video_vae import TilingConfig, get_video_chunks_number
 from ltx_pipelines.ti2vid_two_stages import TI2VidTwoStagesPipeline
-from ltx_pipelines.utils.constants import AUDIO_SAMPLE_RATE
+from ltx_pipelines.utils.constants import AUDIO_SAMPLE_RATE, DEFAULT_NEGATIVE_PROMPT
 from ltx_pipelines.utils.media_io import encode_video
 
 
@@ -23,14 +23,14 @@ class PipelineManager:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def initialize(self):  # noqa: ANN201
-        """Initialize the pipeline with models."""
+    def _load_models(self):  # noqa: ANN202
+        """Load the pipeline models into memory."""
         if self._pipeline is not None:
-            log.info("Pipeline already initialized")
+            log.info("Pipeline already loaded")
             return
 
         try:
-            log.info("Initializing LTX pipeline...")
+            log.info("Loading LTX pipeline models...")
 
             distilled_lora = [
                 LoraPathStrengthAndSDOps(
@@ -50,10 +50,26 @@ class PipelineManager:
                 device=settings.device
             )
 
-            log.info("Pipeline initialized successfully")
+            log.info("Pipeline models loaded successfully")
 
         except Exception as e:
-            log.error(f"Failed to initialize pipeline: {e}")
+            log.error(f"Failed to load pipeline models: {e}")
+            raise
+
+    def _unload_models(self):  # noqa: ANN202
+        """Unload the pipeline models from memory."""
+        if self._pipeline is None:
+            log.info("Pipeline already unloaded")
+            return
+
+        try:
+            log.info("Unloading pipeline models...")
+            del self._pipeline
+            self._pipeline = None
+            torch.cuda.empty_cache()
+            log.info("Pipeline models unloaded successfully")
+        except Exception as e:
+            log.error(f"Failed to unload pipeline models: {e}")
             raise
 
     def generate_video(  # noqa: PLR0913
@@ -89,10 +105,11 @@ class PipelineManager:
         Returns:
             Path to generated video
         """
-        if self._pipeline is None:
-            raise RuntimeError("Pipeline not initialized")
 
         try:
+            # Load models before generation
+            self._load_models()
+
             log.info(f"Starting video generation with prompt: {prompt[:50]}...")
 
             # Calculate num_frames from duration and fps
@@ -116,10 +133,12 @@ class PipelineManager:
             # Generate video
             video, audio = self._pipeline(
                 prompt=prompt,
-                negative_prompt=negative_prompt or "Text in video, Bad hand shapes, bad motion, incorrect physics.",
+                negative_prompt=negative_prompt or DEFAULT_NEGATIVE_PROMPT,
                 seed=seed,
-                width=width,
-                height=height,
+                # width=width,  # noqa: ERA001
+                # height=height,  # noqa: ERA001
+                width=1920, # To be changed later.
+                height=1024, # To be changed later.
                 frame_rate=fps,
                 num_frames=num_frames,
                 tiling_config=tiling_config,
@@ -146,15 +165,13 @@ class PipelineManager:
         except Exception as e:
             log.error(f"Video generation failed: {e}")
             raise
+        finally:
+            # Always unload models after generation (success or failure)
+            self._unload_models()
 
     def cleanup(self):  # noqa: ANN201
         """Cleanup pipeline resources."""
-        if self._pipeline is not None:
-            log.info("Cleaning up pipeline resources...")
-            del self._pipeline
-            self._pipeline = None
-            torch.cuda.empty_cache()
-            log.info("Pipeline cleanup complete")
+        self._unload_models()
 
 
 # Global instance
